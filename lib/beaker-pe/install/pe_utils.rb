@@ -542,6 +542,7 @@ module Beaker
               # Now that all hosts are in the dashbaord, run puppet one more
               # time to configure mcollective
               install_hosts.each do |host|
+                check_puppetdb_status_endpoint(database)
                 on host, puppet_agent('-t'), :acceptable_exit_codes => [0,2]
                 # To work around PE-14318 if we just ran puppet agent on the
                 # database node we will need to wait until puppetdb is up and
@@ -710,15 +711,24 @@ module Beaker
         end
 
         def check_puppetdb_status_endpoint(host)
-          if version_is_less(host['pe_ver'], '2016.1.0')
-            return true
-          end
-          Timeout.timeout(60) do
-            match = nil
-            while not match
-              output = on(host, "curl -s http://localhost:8080/pdb/meta/v1/version", :accept_all_exit_codes => true)
-              match = output.stdout =~ /version.*\d+\.\d+\.\d+/
-              sleep 1
+          step 'Check PDB Status' do
+            if version_is_less(host['pe_ver'], '2016.1.0')
+              return true
+            end
+            Timeout.timeout(60) do
+              match = nil
+              while not match
+                puts on(host, "curl -s http://localhost:8080/pdb/meta/v1/version", :accept_all_exit_codes => true).stdout
+                dbname = database.hostname
+                hostname = host.hostname
+                cacert = "/etc/puppetlabs/puppet/ssl/certs/ca.pem"
+                cert = "/etc/puppetlabs/puppet/ssl/certs/#{hostname}.pem"
+                key = "/etc/puppetlabs/puppet/ssl/private_keys/#{hostname}.pem"
+                curlPdbCommand = "curl -X GET https://#{dbname}:8081/pdb/query/v4/environments --tlsv1 --cacert #{cacert} --cert #{cert} --key #{key}"
+                output = on(host, curlPdbCommand, :accept_all_exit_codes => true)
+                match = output.stdout.include? "production"
+                sleep 1
+              end
             end
           end
         rescue Timeout::Error
